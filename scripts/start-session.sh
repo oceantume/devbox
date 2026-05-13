@@ -60,6 +60,12 @@ fi
 
 mkdir -p "$WORKTREES_DIR/$REPO"
 
+echo "Fetching latest $BASE_BRANCH..."
+git -C "$REPO_DIR" fetch origin
+git -C "$REPO_DIR" merge --ff-only "origin/$BASE_BRANCH" || {
+  echo "Warning: could not fast-forward $BASE_BRANCH (diverged?), using local state." >&2
+}
+
 echo "Creating worktree '$BRANCH_NAME' from $BASE_BRANCH..."
 git -C "$REPO_DIR" worktree add -b "$BRANCH_NAME" "$WORKTREE_PATH" "$BASE_BRANCH"
 
