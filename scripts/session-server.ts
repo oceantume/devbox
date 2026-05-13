@@ -107,6 +107,62 @@ function esc(str: string): string {
     .replace(/"/g, "&quot;");
 }
 
+function tmuxCapture(tmuxSession: string): string {
+  try {
+    return execFileSync(
+      "tmux",
+      ["capture-pane", "-t", `${tmuxSession}:server`, "-p", "-S", "-500"],
+      { encoding: "utf8" },
+    );
+  } catch {
+    return "(tmux session not found)";
+  }
+}
+
+function renderLogsPage(name: string, tmuxSession: string, initialOutput: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${esc(name)} — logs</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0f1117; --surface: #1a1d27; --border: #2d3148;
+      --accent: #6c63ff; --text: #e2e8f0; --muted: #8892a4;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    body { background: var(--bg); color: var(--text); font-family: var(--font);
+           display: flex; flex-direction: column; height: 100dvh; }
+    header { display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+             border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    header a { color: var(--muted); text-decoration: none; font-size: .85rem; }
+    header a:hover { color: var(--text); }
+    header strong { font-size: .95rem; }
+    header .tag { font-size: .7rem; color: var(--muted); background: var(--surface);
+                  padding: 2px 8px; border-radius: 20px; border: 1px solid var(--border); }
+    pre { flex: 1; overflow: auto; padding: 14px 16px; font-family: "SF Mono", "Fira Code",
+          "Consolas", monospace; font-size: .75rem; line-height: 1.5;
+          white-space: pre-wrap; word-break: break-all; color: #c9d1d9; }
+  </style>
+</head>
+<body>
+  <header>
+    <a href="/">← Back</a>
+    <strong>${esc(name)}</strong>
+    <span class="tag">dev server</span>
+  </header>
+  <pre id="log">${esc(initialOutput)}</pre>
+  <script>
+    const pre = document.getElementById('log');
+    const es = new EventSource('/sessions/${esc(name)}/stream');
+    es.onmessage = e => { pre.textContent = JSON.parse(e.data); pre.scrollTop = pre.scrollHeight; };
+  </script>
+</body>
+</html>`;
+}
+
 function renderPage(sessions: Session[], branches: string[]): string {
   const cards =
     sessions.length === 0
@@ -124,6 +180,7 @@ function renderPage(sessions: Session[], branches: string[]): string {
           </div>
           <div class="row"><span>Dev server</span><a href="${esc(devUrl)}" target="_blank">${esc(devUrl)}</a></div>
           ${claudeUrl ? `<div class="row"><span>Claude</span><a href="${esc(claudeUrl)}" target="_blank">Open session ↗</a></div>` : ""}
+          <div class="row"><span>Logs</span><a href="/sessions/${esc(s.name)}">View dev server logs ↗</a></div>
           <div class="row"><span>Running</span><span>${formatElapsed(s.startedAt)}</span></div>
           <div class="row"><span>tmux</span><code>${esc(s.tmuxSession)}</code></div>
           <form method="POST" action="/stop">
@@ -284,6 +341,46 @@ const server = http.createServer(async (req, res) => {
 
     res.writeHead(302, { Location: "/" });
     res.end();
+    return;
+  }
+
+  const logsMatch = url.pathname.match(/^\/sessions\/([a-z0-9-]+)$/);
+  if (req.method === "GET" && logsMatch) {
+    const name = logsMatch[1];
+    const sessionFile = path.join(SESSIONS_DIR, `${name}.json`);
+    if (!fs.existsSync(sessionFile)) {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("Session not found");
+      return;
+    }
+    const session = JSON.parse(fs.readFileSync(sessionFile, "utf8")) as Session;
+    const initial = tmuxCapture(session.tmuxSession);
+    const html = renderLogsPage(name, session.tmuxSession, initial);
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(html);
+    return;
+  }
+
+  const streamMatch = url.pathname.match(/^\/sessions\/([a-z0-9-]+)\/stream$/);
+  if (req.method === "GET" && streamMatch) {
+    const name = streamMatch[1];
+    const sessionFile = path.join(SESSIONS_DIR, `${name}.json`);
+    if (!fs.existsSync(sessionFile)) {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("Session not found");
+      return;
+    }
+    const session = JSON.parse(fs.readFileSync(sessionFile, "utf8")) as Session;
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+    const interval = setInterval(() => {
+      const output = tmuxCapture(session.tmuxSession);
+      res.write(`data: ${JSON.stringify(output)}\n\n`);
+    }, 2000);
+    req.on("close", () => clearInterval(interval));
     return;
   }
 
