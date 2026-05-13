@@ -140,6 +140,10 @@ function renderLogsPage(name: string, tmuxSession: string, initialOutput: string
     header strong { font-size: .95rem; }
     header .tag { font-size: .7rem; color: var(--muted); background: var(--surface);
                   padding: 2px 8px; border-radius: 20px; border: 1px solid var(--border); }
+    .btn-restart { margin-left: auto; padding: 6px 12px; background: transparent;
+                   border: 1px solid var(--border); color: var(--muted); border-radius: 8px;
+                   font-size: .8rem; cursor: pointer; }
+    .btn-restart:active { border-color: var(--accent); color: var(--accent); }
     pre { flex: 1; overflow: auto; padding: 14px 16px; font-family: "SF Mono", "Fira Code",
           "Consolas", monospace; font-size: .75rem; line-height: 1.5;
           white-space: pre-wrap; word-break: break-all; color: #c9d1d9; }
@@ -150,6 +154,9 @@ function renderLogsPage(name: string, tmuxSession: string, initialOutput: string
     <a href="/">← Back</a>
     <strong>${esc(name)}</strong>
     <span class="tag">dev server</span>
+    <form method="POST" action="/sessions/${esc(name)}/restart">
+      <button class="btn-restart">↺ Restart</button>
+    </form>
   </header>
   <pre id="log">${esc(initialOutput)}</pre>
   <script>
@@ -398,6 +405,27 @@ const server = http.createServer(async (req, res) => {
     }
 
     res.writeHead(302, { Location: "/" });
+    res.end();
+    return;
+  }
+
+  const restartMatch = url.pathname.match(/^\/sessions\/([a-z0-9-]+)\/restart$/);
+  if (req.method === "POST" && restartMatch) {
+    const name = restartMatch[1];
+    const sessionFile = path.join(SESSIONS_DIR, `${name}.json`);
+    if (!fs.existsSync(sessionFile)) {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("Session not found");
+      return;
+    }
+    const session = JSON.parse(fs.readFileSync(sessionFile, "utf8")) as Session;
+    execFileSync("tmux", ["send-keys", "-t", `${session.tmuxSession}:server`, "C-c", ""]);
+    await new Promise((r) => setTimeout(r, 1000));
+    execFileSync("tmux", [
+      "send-keys", "-t", `${session.tmuxSession}:server`,
+      `npm run dev -- --port ${session.port} --host`, "Enter",
+    ]);
+    res.writeHead(302, { Location: `/sessions/${name}` });
     res.end();
     return;
   }
