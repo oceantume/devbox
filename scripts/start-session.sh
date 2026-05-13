@@ -71,7 +71,7 @@ EOF
 echo "Starting tmux session dev-$SESSION_NAME..."
 tmux new-session -d -s "dev-$SESSION_NAME" -x 220 -c "$WORKTREE_PATH"
 tmux rename-window -t "dev-$SESSION_NAME:0" "server"
-tmux send-keys -t "dev-$SESSION_NAME:server" "npm run dev -- --port $PORT" Enter
+tmux send-keys -t "dev-$SESSION_NAME:server" "npm run dev -- --port $PORT --host" Enter
 
 tmux new-window -t "dev-$SESSION_NAME" -n "claude" -c "$WORKTREE_PATH"
 tmux send-keys -t "dev-$SESSION_NAME:claude" "claude --remote-control \"$SESSION_NAME\" --name \"spectaculaire/$SESSION_NAME\" --add-dir /srv/devbox" Enter
