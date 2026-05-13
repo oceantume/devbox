@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_DIR="/srv/devbox/repos/spectaculaire"
+REPOS_DIR="/srv/devbox/repos"
 SESSIONS_DIR="/srv/devbox/sessions"
 
 SESSION_NAME="${1:-}"
@@ -28,9 +28,11 @@ read_json_field() {
   grep -o "\"$1\": *\"[^\"]*\"" "$2" | grep -o '"[^"]*"$' | tr -d '"'
 }
 
+REPO=$(read_json_field "repo" "$SESSION_JSON")
 WORKTREE_PATH=$(read_json_field "worktreePath" "$SESSION_JSON")
 TMUX_SESSION=$(read_json_field "tmuxSession" "$SESSION_JSON")
 BRANCH=$(read_json_field "branch" "$SESSION_JSON")
+REPO_DIR="$REPOS_DIR/$REPO"
 
 echo "Stopping session '$SESSION_NAME'..."
 

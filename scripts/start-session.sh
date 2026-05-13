@@ -1,21 +1,34 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_DIR="/srv/devbox/repos/spectaculaire"
+REPOS_DIR="/srv/devbox/repos"
 WORKTREES_DIR="/srv/devbox/worktrees"
 SESSIONS_DIR="/srv/devbox/sessions"
 
 SESSION_NAME="${1:-}"
-BASE_BRANCH="${2:-main}"
-REQUESTED_PORT="${3:-4321}"
+REPO="${2:-}"
+BASE_BRANCH="${3:-main}"
+REQUESTED_PORT="${4:-4321}"
 
-if [[ -z "$SESSION_NAME" ]]; then
-  echo "Usage: start-session.sh <session-name> [base-branch] [port]" >&2
+if [[ -z "$SESSION_NAME" || -z "$REPO" ]]; then
+  echo "Usage: start-session.sh <session-name> <repo> [base-branch] [port]" >&2
   exit 1
 fi
 
 if ! [[ "$SESSION_NAME" =~ ^[a-z0-9-]+$ ]]; then
   echo "Error: session name must be lowercase alphanumeric/hyphens only" >&2
+  exit 1
+fi
+
+if ! [[ "$REPO" =~ ^[a-z0-9_-]+$ ]]; then
+  echo "Error: repo name must be lowercase alphanumeric/hyphens/underscores only" >&2
+  exit 1
+fi
+
+REPO_DIR="$REPOS_DIR/$REPO"
+
+if [[ ! -d "$REPO_DIR/.git" ]]; then
+  echo "Error: no git repo found at $REPO_DIR" >&2
   exit 1
 fi
 
@@ -37,13 +50,15 @@ find_free_port() {
 
 PORT=$(find_free_port "$REQUESTED_PORT")
 
-WORKTREE_PATH="$WORKTREES_DIR/$SESSION_NAME"
+WORKTREE_PATH="$WORKTREES_DIR/$REPO/$SESSION_NAME"
 BRANCH_NAME="session/$SESSION_NAME"
 
 if [[ -d "$WORKTREE_PATH" ]]; then
   echo "Error: worktree directory already exists at $WORKTREE_PATH" >&2
   exit 1
 fi
+
+mkdir -p "$WORKTREES_DIR/$REPO"
 
 echo "Creating worktree '$BRANCH_NAME' from $BASE_BRANCH..."
 git -C "$REPO_DIR" worktree add -b "$BRANCH_NAME" "$WORKTREE_PATH" "$BASE_BRANCH"
@@ -58,6 +73,7 @@ STARTED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 cat > "$SESSION_JSON" <<EOF
 {
   "name": "$SESSION_NAME",
+  "repo": "$REPO",
   "branch": "$BRANCH_NAME",
   "baseBranch": "$BASE_BRANCH",
   "port": $PORT,
@@ -74,10 +90,11 @@ tmux rename-window -t "dev-$SESSION_NAME:0" "server"
 tmux send-keys -t "dev-$SESSION_NAME:server" "npm run dev -- --port $PORT --host" Enter
 
 tmux new-window -t "dev-$SESSION_NAME" -n "claude" -c "$WORKTREE_PATH"
-tmux send-keys -t "dev-$SESSION_NAME:claude" "claude --remote-control \"$SESSION_NAME\" --name \"spectaculaire/$SESSION_NAME\" --add-dir /srv/devbox" Enter
+tmux send-keys -t "dev-$SESSION_NAME:claude" "claude --remote-control \"$SESSION_NAME\" --name \"$REPO/$SESSION_NAME\" --add-dir /srv/devbox" Enter
 
 echo ""
 echo "Session '$SESSION_NAME' started."
+echo "  Repo:        $REPO"
 echo "  Dev server:  http://$TAILSCALE_IP:$PORT"
 echo "  Branch:      $BRANCH_NAME"
 echo "  tmux:        tmux attach -t dev-$SESSION_NAME"

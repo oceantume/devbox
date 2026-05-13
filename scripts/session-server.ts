@@ -7,7 +7,7 @@ import { URLSearchParams } from "node:url";
 const PORT = 8080;
 const SESSIONS_DIR = "/srv/devbox/sessions";
 const SCRIPTS_DIR = "/srv/devbox/scripts";
-const REPO_DIR = "/srv/devbox/repos/spectaculaire";
+const REPOS_DIR = "/srv/devbox/repos";
 
 let TAILSCALE_IP = "127.0.0.1";
 try {
@@ -18,6 +18,7 @@ try {
 
 interface Session {
   name: string;
+  repo: string;
   branch: string;
   baseBranch: string;
   port: number;
@@ -64,19 +65,37 @@ function readSessions(): Session[] {
   }
 }
 
-function readBranches(): string[] {
+function listRepos(): string[] {
   try {
-    return execFileSync("git", ["-C", REPO_DIR, "branch", "-a", "--format=%(refname:short)"], {
-      encoding: "utf8",
-    })
-      .split("\n")
-      .map((b) => b.trim().replace(/^origin\//, ""))
-      .filter((b) => b && !b.startsWith("HEAD") && !b.startsWith("session/"))
-      .filter((v, i, a) => a.indexOf(v) === i)
+    return fs
+      .readdirSync(REPOS_DIR)
+      .filter((name) => fs.existsSync(path.join(REPOS_DIR, name, ".git")))
       .sort();
   } catch {
-    return ["main"];
+    return [];
   }
+}
+
+function readBranches(repos: string[]): string[] {
+  const all: string[] = [];
+  for (const repo of repos) {
+    try {
+      const lines = execFileSync(
+        "git",
+        ["-C", path.join(REPOS_DIR, repo), "branch", "-a", "--format=%(refname:short)"],
+        { encoding: "utf8" },
+      ).split("\n");
+      for (const b of lines) {
+        const clean = b.trim().replace(/^origin\//, "");
+        if (clean && !clean.startsWith("HEAD") && !clean.startsWith("session/")) {
+          all.push(clean);
+        }
+      }
+    } catch {
+      // skip unreachable repos
+    }
+  }
+  return [...new Set(all)].sort();
 }
 
 function formatElapsed(startedAt: string): string {
@@ -163,7 +182,7 @@ function renderLogsPage(name: string, tmuxSession: string, initialOutput: string
 </html>`;
 }
 
-function renderPage(sessions: Session[], branches: string[]): string {
+function renderPage(sessions: Session[], repos: string[], branches: string[]): string {
   const cards =
     sessions.length === 0
       ? `<p class="empty">No active sessions.</p>`
@@ -176,6 +195,7 @@ function renderPage(sessions: Session[], branches: string[]): string {
         <div class="card">
           <div class="card-header">
             <strong>${esc(s.name)}</strong>
+            <span class="tag">${esc(s.repo)}</span>
             <span class="tag">${esc(s.branch)}</span>
           </div>
           <div class="row"><span>Dev server</span><a href="${esc(devUrl)}" target="_blank">${esc(devUrl)}</a></div>
@@ -190,6 +210,10 @@ function renderPage(sessions: Session[], branches: string[]): string {
         </div>`;
           })
           .join("\n");
+
+  const repoOpts = repos
+    .map((r) => `<option value="${esc(r)}">${esc(r)}</option>`)
+    .join("\n");
 
   const branchOpts = branches
     .map((b) => `<option value="${esc(b)}"${b === "main" ? " selected" : ""}>${esc(b)}</option>`)
@@ -269,6 +293,10 @@ function renderPage(sessions: Session[], branches: string[]): string {
       <p class="hint">lowercase letters, numbers, hyphens</p>
     </div>
     <div class="field">
+      <label for="repo">Repository</label>
+      <select id="repo" name="repo">${repoOpts}</select>
+    </div>
+    <div class="field">
       <label for="branch">Base branch</label>
       <select id="branch" name="branch">${branchOpts}</select>
     </div>
@@ -288,7 +316,8 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
 
   if (req.method === "GET" && url.pathname === "/") {
-    const html = renderPage(readSessions(), readBranches());
+    const repos = listRepos();
+    const html = renderPage(readSessions(), repos, readBranches(repos));
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(html);
     return;
@@ -297,10 +326,11 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/start") {
     const body = await parseBody(req);
     const name = (body.name ?? "").trim();
+    const repo = (body.repo ?? "").trim();
     const branch = (body.branch ?? "main").trim();
     const port = (body.port ?? "4321").trim();
 
-    if (!/^[a-z0-9-]+$/.test(name)) {
+    if (!/^[a-z0-9-]+$/.test(name) || !/^[a-z0-9_-]+$/.test(repo)) {
       res.writeHead(302, { Location: "/" });
       res.end();
       return;
@@ -308,7 +338,7 @@ const server = http.createServer(async (req, res) => {
 
     execFile(
       `${SCRIPTS_DIR}/start-session.sh`,
-      [name, branch, port],
+      [name, repo, branch, port],
       { env: { ...process.env } },
       (err, _stdout, stderr) => {
         if (err) console.error(`[start] ${name}:`, stderr || err.message);
