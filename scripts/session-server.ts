@@ -161,22 +161,35 @@ function renderLogsPage(name: string, tmuxSession: string, initialOutput: string
 </html>`;
 }
 
+function repoBranches(repoDir: string): string[] {
+  const git = (...args: string[]) => {
+    try {
+      return execFileSync("git", ["-C", repoDir, ...args], { encoding: "utf8" })
+        .split("\n")
+        .map((b) => b.trim())
+        .filter(Boolean);
+    } catch {
+      return [];
+    }
+  };
+  const remoteNames = git("remote");
+  const local = git("branch", "--format=%(refname:short)");
+  const remote = git("branch", "-r", "--format=%(refname:short)").flatMap((b) => {
+    for (const r of remoteNames) {
+      if (b.startsWith(`${r}/`)) return [b.slice(r.length + 1)];
+    }
+    return [];
+  });
+  return [...new Set([...local, ...remote])]
+    .filter((b) => b !== "HEAD" && !b.startsWith("session/"))
+    .sort();
+}
+
 function readBranchesByRepo(repos: string[]): Record<string, string[]> {
   const result: Record<string, string[]> = {};
   for (const repo of repos) {
-    try {
-      result[repo] = execFileSync(
-        "git",
-        ["-C", path.join(REPOS_DIR, repo), "branch", "--format=%(refname:short)"],
-        { encoding: "utf8" },
-      )
-        .split("\n")
-        .map((b) => b.trim())
-        .filter((b) => b && !b.startsWith("session/"))
-        .sort();
-    } catch {
-      result[repo] = ["main"];
-    }
+    const branches = repoBranches(path.join(REPOS_DIR, repo));
+    result[repo] = branches.length ? branches : ["main"];
   }
   return result;
 }

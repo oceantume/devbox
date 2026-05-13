@@ -46,11 +46,16 @@ fi
 if [[ "$KEEP_WORKTREE" == "false" ]]; then
   if [[ -d "$WORKTREE_PATH" ]]; then
     echo "  Removing worktree at $WORKTREE_PATH..."
-    git -C "$REPO_DIR" worktree remove --force "$WORKTREE_PATH"
-  fi
-  if git -C "$REPO_DIR" rev-parse --verify "$BRANCH" &>/dev/null; then
-    echo "  Deleting branch $BRANCH..."
-    git -C "$REPO_DIR" branch -D "$BRANCH"
+    if [[ -n "$REPO" && -d "$REPO_DIR/.git" ]]; then
+      git -C "$REPO_DIR" worktree remove --force "$WORKTREE_PATH"
+      if git -C "$REPO_DIR" rev-parse --verify "$BRANCH" &>/dev/null; then
+        echo "  Deleting branch $BRANCH..."
+        git -C "$REPO_DIR" branch -D "$BRANCH"
+      fi
+    else
+      echo "  (repo not found, removing worktree directory directly)"
+      rm -rf "$WORKTREE_PATH"
+    fi
   fi
 else
   echo "  --keep-worktree: leaving $WORKTREE_PATH in place."
