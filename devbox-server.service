@@ -1,0 +1,13 @@
+[Unit]
+Description=Devbox session manager
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/srv/devbox/scripts/serve.sh
+WorkingDirectory=/srv/devbox
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
