@@ -76,27 +76,6 @@ function listRepos(): string[] {
   }
 }
 
-function readBranches(repos: string[]): string[] {
-  const all: string[] = [];
-  for (const repo of repos) {
-    try {
-      const lines = execFileSync(
-        "git",
-        ["-C", path.join(REPOS_DIR, repo), "branch", "-a", "--format=%(refname:short)"],
-        { encoding: "utf8" },
-      ).split("\n");
-      for (const b of lines) {
-        const clean = b.trim().replace(/^origin\//, "");
-        if (clean && !clean.startsWith("HEAD") && !clean.startsWith("session/")) {
-          all.push(clean);
-        }
-      }
-    } catch {
-      // skip unreachable repos
-    }
-  }
-  return [...new Set(all)].sort();
-}
 
 function formatElapsed(startedAt: string): string {
   const mins = Math.floor((Date.now() - new Date(startedAt).getTime()) / 60000);
@@ -182,7 +161,27 @@ function renderLogsPage(name: string, tmuxSession: string, initialOutput: string
 </html>`;
 }
 
-function renderPage(sessions: Session[], repos: string[], branches: string[]): string {
+function readBranchesByRepo(repos: string[]): Record<string, string[]> {
+  const result: Record<string, string[]> = {};
+  for (const repo of repos) {
+    try {
+      result[repo] = execFileSync(
+        "git",
+        ["-C", path.join(REPOS_DIR, repo), "branch", "--format=%(refname:short)"],
+        { encoding: "utf8" },
+      )
+        .split("\n")
+        .map((b) => b.trim())
+        .filter((b) => b && !b.startsWith("session/"))
+        .sort();
+    } catch {
+      result[repo] = ["main"];
+    }
+  }
+  return result;
+}
+
+function renderPage(sessions: Session[], repos: string[]): string {
   const cards =
     sessions.length === 0
       ? `<p class="empty">No active sessions.</p>`
@@ -211,12 +210,20 @@ function renderPage(sessions: Session[], repos: string[], branches: string[]): s
           })
           .join("\n");
 
+  const branchesByRepo = readBranchesByRepo(repos);
+  const firstRepo = repos[0] ?? "";
+
   const repoOpts = repos
     .map((r) => `<option value="${esc(r)}">${esc(r)}</option>`)
     .join("\n");
 
-  const branchOpts = branches
-    .map((b) => `<option value="${esc(b)}"${b === "main" ? " selected" : ""}>${esc(b)}</option>`)
+  const branchOpts = repos
+    .flatMap((r) =>
+      (branchesByRepo[r] ?? ["main"]).map(
+        (b) =>
+          `<option value="${esc(b)}" data-repo="${esc(r)}"${b === "main" && r === firstRepo ? " selected" : ""}>${esc(b)}</option>`,
+      ),
+    )
     .join("\n");
 
   return `<!DOCTYPE html>
@@ -294,7 +301,7 @@ function renderPage(sessions: Session[], repos: string[], branches: string[]): s
     </div>
     <div class="field">
       <label for="repo">Repository</label>
-      <select id="repo" name="repo">${repoOpts}</select>
+      <select id="repo" name="repo" onchange="filterBranches(this.value)">${repoOpts}</select>
     </div>
     <div class="field">
       <label for="branch">Base branch</label>
@@ -308,6 +315,15 @@ function renderPage(sessions: Session[], repos: string[], branches: string[]): s
     </div>
     <button type="submit" class="btn-start">Start session</button>
   </form>
+  <script>
+    function filterBranches(repo) {
+      const sel = document.getElementById('branch');
+      for (const opt of sel.options) opt.hidden = opt.dataset.repo !== repo;
+      const first = [...sel.options].find(o => !o.hidden);
+      if (first) sel.value = first.value;
+    }
+    filterBranches(document.getElementById('repo').value);
+  </script>
 </body>
 </html>`;
 }
@@ -316,8 +332,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
 
   if (req.method === "GET" && url.pathname === "/") {
-    const repos = listRepos();
-    const html = renderPage(readSessions(), repos, readBranches(repos));
+    const html = renderPage(readSessions(), listRepos());
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(html);
     return;
