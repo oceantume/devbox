@@ -27,6 +27,26 @@ interface Session {
   tmuxSession: string;
 }
 
+function findClaudeBridgeSessionId(worktreePath: string): string | null {
+  try {
+    const dir = path.join(process.env.HOME ?? "/home/dev", ".claude", "sessions");
+    for (const file of fs.readdirSync(dir)) {
+      if (!file.endsWith(".json")) continue;
+      try {
+        const data = JSON.parse(fs.readFileSync(path.join(dir, file), "utf8"));
+        if (data.cwd === worktreePath && data.bridgeSessionId) {
+          return data.bridgeSessionId as string;
+        }
+      } catch {
+        // ignore malformed files
+      }
+    }
+  } catch {
+    // ignore missing directory
+  }
+  return null;
+}
+
 function readSessions(): Session[] {
   try {
     return fs
@@ -94,6 +114,8 @@ function renderPage(sessions: Session[], branches: string[]): string {
       : sessions
           .map((s) => {
             const devUrl = `http://${s.tailscaleIp}:${s.port}`;
+            const bridgeId = findClaudeBridgeSessionId(s.worktreePath);
+            const claudeUrl = bridgeId ? `https://claude.ai/code/${bridgeId}` : null;
             return `
         <div class="card">
           <div class="card-header">
@@ -101,6 +123,7 @@ function renderPage(sessions: Session[], branches: string[]): string {
             <span class="tag">${esc(s.branch)}</span>
           </div>
           <div class="row"><span>Dev server</span><a href="${esc(devUrl)}" target="_blank">${esc(devUrl)}</a></div>
+          ${claudeUrl ? `<div class="row"><span>Claude</span><a href="${esc(claudeUrl)}" target="_blank">Open session ↗</a></div>` : ""}
           <div class="row"><span>Running</span><span>${formatElapsed(s.startedAt)}</span></div>
           <div class="row"><span>tmux</span><code>${esc(s.tmuxSession)}</code></div>
           <form method="POST" action="/stop">
