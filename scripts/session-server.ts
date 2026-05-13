@@ -161,8 +161,13 @@ function renderLogsPage(name: string, tmuxSession: string, initialOutput: string
   <pre id="log">${esc(initialOutput)}</pre>
   <script>
     const pre = document.getElementById('log');
+    pre.scrollTop = pre.scrollHeight;
     const es = new EventSource('/sessions/${esc(name)}/stream');
-    es.onmessage = e => { pre.textContent = JSON.parse(e.data); pre.scrollTop = pre.scrollHeight; };
+    es.onmessage = e => {
+      const atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 50;
+      pre.textContent = e.data;
+      if (atBottom) pre.scrollTop = pre.scrollHeight;
+    };
   </script>
 </body>
 </html>`;
@@ -464,7 +469,8 @@ const server = http.createServer(async (req, res) => {
     });
     const interval = setInterval(() => {
       const output = tmuxCapture(session.tmuxSession);
-      res.write(`data: ${JSON.stringify(output)}\n\n`);
+      const lines = output.split("\n").map((l) => `data: ${l}`).join("\n");
+      res.write(`${lines}\n\n`);
     }, 2000);
     req.on("close", () => clearInterval(interval));
     return;
